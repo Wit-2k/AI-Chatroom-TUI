@@ -49,9 +49,6 @@ class DiscussionEngine:
         return sanitized.strip()[:50]
 
     def _parse_summary_response(self, response: str) -> Optional[SummaryResult]:
-
-        print(f"DEBUG: response=\n{response}")
-
         # 尝试策略1：直接解析（模型输出合规 JSON 时）
         try:
             json_match = re.search(r'\{[\s\S]*\}', response)
