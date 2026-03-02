@@ -48,6 +48,7 @@ class DiscussionEngine:
         return sanitized.strip()[:50]
 
     def _parse_summary_response(self, response: str) -> Optional[SummaryResult]:
+        # 尝试策略1：直接解析（模型输出合规 JSON 时）
         try:
             json_match = re.search(r'\{[\s\S]*\}', response)
             if json_match:
@@ -59,6 +60,43 @@ class DiscussionEngine:
                 )
         except json.JSONDecodeError:
             pass
+
+        # 尝试策略2：修复 JSON 字符串内的裸换行后再解析
+        # 模型有时会在 content 字段内输出真实换行而非 \n，导致 JSON 非法
+        try:
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                raw = json_match.group()
+                # 将字符串值内部的裸换行替换为 \n（仅处理引号内的换行）
+                fixed = re.sub(
+                    r'("(?:[^"\\]|\\.)*")',
+                    lambda m: m.group(0).replace('\n', '\\n').replace('\r', ''),
+                    raw,
+                )
+                data = json.loads(fixed)
+                return SummaryResult(
+                    title=data.get("title", "讨论总结"),
+                    summary=data.get("summary", ""),
+                    content=data.get("content", response),
+                )
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        # 尝试策略3：用正则直接提取各字段（兜底方案）
+        try:
+            title = re.search(r'"title"\s*:\s*"([^"]+)"', response)
+            summary = re.search(r'"summary"\s*:\s*"([^"]+)"', response)
+            # content 可能跨多行，用非贪婪匹配
+            content = re.search(r'"content"\s*:\s*"([\s\S]+?)"\s*\}', response)
+            if title and summary:
+                return SummaryResult(
+                    title=title.group(1),
+                    summary=summary.group(1),
+                    content=content.group(1).replace('\\n', '\n') if content else response,
+                )
+        except Exception:
+            pass
+
         return None
 
     def _save_summary(self, result: SummaryResult) -> str:
@@ -78,24 +116,63 @@ class DiscussionEngine:
         
         return filepath
 
-    def _build_context_prompt(self, speaker: PersonaConfig) -> str:
+    def _build_context_prompt(self, speaker: PersonaConfig, round_num: int) -> str:
+        """
+        构建 user 消息内容。
+        system_prompt 已在调用处单独作为 system 消息传入，此处只返回 user prompt 字符串。
+        """
+        # 找到最新一条非当前角色的发言
+        last_message: Optional[Message] = None
+        for msg in reversed(self.state.messages):
+            if msg.role == MessageRole.ASSISTANT and msg.speaker != speaker.name:
+                last_message = msg
+                break
+
+        # 构建历史记录（排除最新一条，避免重复展示）
         history_lines = []
         for msg in self.state.messages:
-            if msg.role == MessageRole.ASSISTANT:
-                history_lines.append(f"【{msg.speaker}】说：{msg.content}")
+            if msg.role == MessageRole.ASSISTANT and msg is not last_message:
+                history_lines.append(f"【{msg.speaker}】：{msg.content}")
 
-        context = "\n".join(history_lines) if history_lines else "（这是讨论的开始）"
+        history_text = "\n".join(history_lines) if history_lines else "（暂无更早的发言记录）"
 
-        prompt = f"""当前讨论主题：{self.topic}
+        # 判断轮次阶段
+        is_opening = (round_num == 1 and not self.state.messages)
+        is_final = (round_num == self.max_rounds)
 
-之前的对话记录：
-{context}
+        if is_opening:
+            round_hint = "这是讨论的开场，请先陈述你对该话题的核心立场与观点。"
+        elif is_final:
+            round_hint = (
+                f"这是第 {round_num} 轮，也是最后一轮。"
+                "请先回应上一位发言者的具体论点，再做出你的最终立场总结。"
+            )
+        else:
+            round_hint = (
+                f"这是第 {round_num} 轮（共 {self.max_rounds} 轮）。"
+                "请先回应上一位发言者的具体论点，再进一步阐述你的观点。"
+            )
 
-现在轮到你发言。你是【{speaker.name}】。
-{speaker.system_prompt}
+        # 构建最新发言高亮块
+        if last_message:
+            latest_block = (
+                f"\n【最新发言 — 你必须先回应这条】\n"
+                f"【{last_message.speaker}】：{last_message.content}\n"
+            )
+        else:
+            latest_block = ""
 
-请直接发表你的观点，不要加任何前缀或说明。"""
-        return prompt
+        user_prompt = f"""【讨论主题】
+{self.topic}
+
+【之前的对话记录】
+{history_text}
+{latest_block}
+【你的发言任务】
+{round_hint}
+发言请控制在100字以内，直接输出内容，不要加任何角色名前缀或说明文字。"""
+
+        return user_prompt
 
     def _build_summary_prompt(self) -> str:
         conversation = self.state.get_formatted_conversation()
@@ -125,8 +202,11 @@ class DiscussionEngine:
             for speaker_index, speaker in enumerate(self.personas):
                 self.state.current_speaker_index = speaker_index
 
-                context_prompt = self._build_context_prompt(speaker)
-                messages = [{"role": "user", "content": context_prompt}]
+                user_prompt = self._build_context_prompt(speaker, round_num)
+                messages = [
+                    {"role": "system", "content": speaker.system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
 
                 full_response = ""
                 speaker_color = "green" if speaker_index == 0 else "magenta"
