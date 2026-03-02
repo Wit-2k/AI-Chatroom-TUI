@@ -49,6 +49,9 @@ class DiscussionEngine:
         return sanitized.strip()[:50]
 
     def _parse_summary_response(self, response: str) -> Optional[SummaryResult]:
+
+        print(f"DEBUG: response=\n{response}")
+
         # 尝试策略1：直接解析（模型输出合规 JSON 时）
         try:
             json_match = re.search(r'\{[\s\S]*\}', response)
@@ -261,7 +264,7 @@ class DiscussionEngine:
         summary_response = ""
         self.console.print("\n[dim]正在生成总结...[/dim]")
 
-        async for chunk in self.llm_client.stream_chat(messages):
+        async for chunk in self.llm_client.stream_chat(messages, max_tokens=2000):
             summary_response += chunk
 
         self.state.is_completed = True
