@@ -38,7 +38,7 @@ class LLMClient:
                     messages=api_messages,
                     stream=True,
                     temperature=0.7,
-                    max_tokens=max_tokens,
+                    max_completion_tokens=max_tokens,
                 ),
                 timeout=_API_TIMEOUT,
             )

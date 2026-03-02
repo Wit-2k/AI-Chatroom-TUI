@@ -26,6 +26,7 @@ class PersonaConfig:
     role_description: str
     persona_prompt: str
     interaction_examples: str = ""
+    model_name: str = ""
 
     @property
     def system_prompt(self) -> str:

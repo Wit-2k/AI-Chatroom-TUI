@@ -3,6 +3,7 @@ import json
 import os
 import random
 import re
+import sys
 from datetime import datetime
 from typing import AsyncGenerator, List, Tuple, Optional
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from config import LLMConfig, PersonaConfig, PERSONAS, SUMMARY_PROMPT
 from models import DiscussionState, Message, MessageRole
 from llm_client import LLMClient
 
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
 
 @dataclass
 class SummaryResult:
@@ -229,7 +232,7 @@ class DiscussionEngine:
                     end="",
                 )
 
-                async for chunk in self.llm_client.stream_chat(messages):
+                async for chunk in self.llm_client.stream_chat(messages, model_name=speaker.model_name):
                     full_response += chunk
                     print(chunk, end="", flush=True)
 
