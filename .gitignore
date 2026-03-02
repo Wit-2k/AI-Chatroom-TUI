@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+.venv/
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+
+uv.lock
+.python-version
